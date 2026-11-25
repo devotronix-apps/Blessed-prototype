@@ -1,4 +1,4 @@
-const CACHE = 'blessed-shell-v2';
+const CACHE = 'blessed-shell-v3';
 const ASSETS = [
   './', './index.html', './manifest.json', './blessed.css',
   './blessed.mjs', './blessed-model.mjs',

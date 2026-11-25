@@ -244,3 +244,31 @@ dialog > .button { margin-top: 12px; }
 .color-choice span { width: 17px; height: 17px; border-radius: 50%; background: var(--highlight); }
 .passage-quote { margin: 0 0 13px; padding-left: 12px; border-left: 3px solid var(--rose); overflow-wrap: anywhere; }
 .annotation .button { margin: 4px 0 -3px -11px; }
+
+.touch-transcript, .touch-transcript * {
+  -webkit-touch-callout: none;
+  -webkit-user-select: none;
+  user-select: none;
+}
+.touch-selection-layer { position: fixed; inset: 0; z-index: 5; pointer-events: none; }
+.touch-selection-fill { position: absolute; background: #8f5a8640; }
+.touch-selection-layer [data-selection-handle] {
+  position: absolute;
+  width: 34px;
+  height: 34px;
+  transform: translateX(-50%);
+  pointer-events: auto;
+  touch-action: none;
+  -webkit-touch-callout: none;
+  user-select: none;
+}
+.touch-selection-layer [data-selection-handle]::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 11px;
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: var(--plum);
+}

@@ -32,6 +32,11 @@ let audioUrl;
 let passageMenu;
 let selectionTimer;
 let pointerSelecting = false;
+let touchGesture;
+let touchPassage;
+const customTouchSelection = navigator.maxTouchPoints > 0 &&
+  (window.CSS?.supports('-webkit-touch-callout', 'none') ||
+    /iPhone|iPad|iPod/.test(navigator.userAgent));
 let busy = false;
 
 function openDatabase() {
@@ -218,6 +223,18 @@ function closePassageMenu() {
   passageMenu = undefined;
 }
 
+function clearTouchPassage() {
+  clearTimeout(touchGesture?.timer);
+  touchGesture = undefined;
+  touchPassage?.layer.remove();
+  touchPassage = undefined;
+}
+
+function dismissPassageSelection() {
+  closePassageMenu();
+  clearTouchPassage();
+}
+
 function detailEntry() {
   return page.name === 'detail' && visibleEntries(state).find(item => item.id === page.id);
 }
@@ -262,15 +279,19 @@ function showSelectedPassage() {
   const selection = document.getSelection();
   const entry = detailEntry();
   if (!entry || !canEdit(entry) || !selection?.rangeCount || selection.isCollapsed || !transcript ||
-      !transcript.contains(selection.anchorNode) || !transcript.contains(selection.focusNode)) return;
+      transcript.classList.contains('touch-transcript') || !transcript.contains(selection.anchorNode) || !transcript.contains(selection.focusNode)) return;
   const range = selection.getRangeAt(0);
   const raw = range.toString();
-  const quote = raw.trim();
-  if (!quote) return;
   const prefix = range.cloneRange();
   prefix.selectNodeContents(transcript);
   prefix.setEnd(range.startContainer, range.startOffset);
-  const start = prefix.toString().length + raw.indexOf(quote);
+  showRangeMenu(entry, range, prefix.toString().length, raw);
+}
+
+function showRangeMenu(entry, range, offset, raw = range.toString()) {
+  const quote = raw.trim();
+  if (!quote) return;
+  const start = offset + raw.indexOf(quote);
   if (entry.text.slice(start, start + quote.length) !== quote) return;
   const index = entry.annotations.findIndex(item =>
     item.quote === quote && annotationRange(entry.text, item)?.start === start);
@@ -278,6 +299,141 @@ function showSelectedPassage() {
   const anchor = rectangles[rectangles.length - 1] || range.getBoundingClientRect();
   showPassageMenu(entry, anchor, { index, start, quote });
 }
+
+function touchOffset(transcript, x, y) {
+  const caret = document.caretRangeFromPoint?.(x, y);
+  if (!caret || !transcript.contains(caret.startContainer)) return;
+  const prefix = caret.cloneRange();
+  prefix.selectNodeContents(transcript);
+  prefix.setEnd(caret.startContainer, caret.startOffset);
+  return prefix.toString().length;
+}
+
+function wordAt(text, offset) {
+  const position = Math.min(offset, text.length - 1);
+  const word = [...text.matchAll(/[\p{L}\p{M}\p{N}]+(?:[’'][\p{L}\p{M}\p{N}]+)*|[^\s]/gu)]
+    .find(item => item.index <= position && item.index + item[0].length > position);
+  if (word) return { start: word.index, end: word.index + word[0].length };
+}
+
+function touchRange() {
+  const { transcript, start, end } = touchPassage;
+  const range = document.createRange();
+  const walker = document.createTreeWalker(transcript, NodeFilter.SHOW_TEXT);
+  let offset = 0;
+  let first;
+  for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+    const limit = offset + node.length;
+    if (!first && start < limit) {
+      range.setStart(node, start - offset);
+      first = node;
+    }
+    if (first && end <= limit) {
+      range.setEnd(node, end - offset);
+      return range;
+    }
+    offset = limit;
+  }
+}
+
+function drawTouchPassage() {
+  const range = touchRange();
+  const rects = range ? [...range.getClientRects()].filter(rect => rect.width && rect.height) : [];
+  const { layer } = touchPassage;
+  const fills = layer.firstElementChild;
+  fills.replaceChildren();
+  for (const rect of rects) {
+    const selection = document.createElement('span');
+    selection.className = 'touch-selection-fill';
+    Object.assign(selection.style, { left: rect.left + 'px', top: rect.top + 'px',
+      width: rect.width + 'px', height: rect.height + 'px' });
+    fills.append(selection);
+  }
+  for (const [edge, rect] of [['start', rects[0]], ['end', rects.at(-1)]]) {
+    const handle = layer.querySelector(`[data-selection-handle="${edge}"]`);
+    handle.hidden = !rect;
+    if (rect) {
+      handle.style.left = (edge === 'start' ? rect.left : rect.right) + 'px';
+      handle.style.top = rect.bottom + 'px';
+    }
+  }
+  return range;
+}
+
+function startTouchPassage(gesture) {
+  const entry = detailEntry();
+  if (!entry || !canEdit(entry) || !gesture.transcript.isConnected) return;
+  const offset = touchOffset(gesture.transcript, gesture.x, gesture.y);
+  const word = Number.isInteger(offset) && wordAt(entry.text, offset);
+  if (!word) return;
+  const layer = document.createElement('div');
+  layer.className = 'touch-selection-layer';
+  layer.setAttribute('aria-hidden', 'true');
+  layer.innerHTML = '<div></div><span data-selection-handle="start"></span><span data-selection-handle="end"></span>';
+  document.body.append(layer);
+  touchPassage = { ...word, layer, transcript: gesture.transcript };
+  gesture.word = word;
+  gesture.active = true;
+  drawTouchPassage();
+}
+
+function startSelectionTouch(event) {
+  if (event.touches.length !== 1) {
+    dismissPassageSelection();
+    return;
+  }
+  const touch = event.changedTouches[0];
+  const handle = event.target.closest?.('[data-selection-handle]');
+  if (handle && touchPassage) {
+    event.preventDefault();
+    closePassageMenu();
+    const rect = handle.getBoundingClientRect();
+    touchGesture = { id: touch.identifier, edge: handle.dataset.selectionHandle, active: true,
+      offsetX: touch.clientX - (rect.left + rect.width / 2), offsetY: touch.clientY - rect.top + 10 };
+    return;
+  }
+  if (passageMenu?.element.contains(event.target)) return;
+  const transcript = event.target.closest?.('.touch-transcript');
+  if (!transcript || sheet.open || busy || !canEdit(detailEntry())) return;
+  dismissPassageSelection();
+  const gesture = { id: touch.identifier, x: touch.clientX, y: touch.clientY, transcript };
+  touchGesture = gesture;
+  gesture.timer = setTimeout(() => startTouchPassage(gesture), 360);
+}
+
+function moveSelectionTouch(event) {
+  const gesture = touchGesture;
+  const touch = gesture && [...event.changedTouches].find(item => item.identifier === gesture.id);
+  if (!touch) return;
+  if (!gesture.active) {
+    if (Math.hypot(touch.clientX - gesture.x, touch.clientY - gesture.y) > 10) clearTouchPassage();
+    return;
+  }
+  event.preventDefault();
+  const offset = touchOffset(touchPassage.transcript,
+    touch.clientX - (gesture.offsetX || 0), touch.clientY - (gesture.offsetY || 0));
+  if (!Number.isInteger(offset)) return;
+  if (gesture.edge === 'start') touchPassage.start = Math.min(offset, touchPassage.end - 1);
+  else if (gesture.edge === 'end') touchPassage.end = Math.max(offset, touchPassage.start + 1);
+  else {
+    touchPassage.start = Math.min(gesture.word.start, offset);
+    touchPassage.end = Math.max(gesture.word.end, offset);
+  }
+  drawTouchPassage();
+}
+
+function endSelectionTouch(event) {
+  const gesture = touchGesture;
+  if (!gesture || ![...event.changedTouches].some(item => item.identifier === gesture.id)) return;
+  clearTimeout(gesture.timer);
+  touchGesture = undefined;
+  if (!gesture.active) return;
+  event.preventDefault();
+  const entry = detailEntry();
+  const range = entry && touchRange();
+  if (range) showRangeMenu(entry, range, touchPassage.start);
+}
+
 
 function queueSelectionMenu(delay) {
   clearTimeout(selectionTimer);
@@ -304,7 +460,7 @@ async function applyPassageChange(context, changes) {
 
 function openPassageNote(entry, context) {
   const item = entry.annotations[context.index];
-  closePassageMenu();
+  dismissPassageSelection();
   document.getSelection()?.removeAllRanges();
   const quote = `<blockquote class="passage-quote">${esc(item?.quote || context.quote)}</blockquote>`;
   if (!canEdit(entry)) {
@@ -328,8 +484,8 @@ function detailScreen(entry) {
     ${audioPlayer(entry)}
     <section class="section reading"><div class="section-heading"><h2>${entry.audio || entry.sampleAudio ? 'Transcript' : 'Blessing text'}</h2>
       ${entry.simulated ? '<span>Sample text</span>' : ''}</div>
-      <p id="transcript" class="transcript">${markedText(entry) || 'No transcript yet.'}</p>
-      ${editable && entry.text ? '<p class="hint">Select text to highlight it. Tap a highlight for options.</p>' : ''}</section>
+      <p id="transcript" class="transcript${customTouchSelection ? ' touch-transcript' : ''}">${markedText(entry) || 'No transcript yet.'}</p>
+      ${editable && entry.text ? `<p class="hint">${customTouchSelection ? 'Touch and hold to select text. Drag the handles to adjust it.' : 'Select text to highlight it.'} Tap a highlight for options.</p>` : ''}</section>
     <section class="section"><div class="section-heading"><h2>Highlights &amp; passage notes</h2></div>
       ${entry.annotations.length ? `<div class="notes">${entry.annotations.map((item, index) => `<article class="annotation"><blockquote>${esc(item.quote)}</blockquote>${item.note ? `<p>${esc(item.note)}</p>` : '<small>Highlight</small>'}
         ${editable || item.note ? action('Passage options', 'passage-existing', { id: index + 1 }) : ''}</article>`).join('')}</div>` : '<p class="hint">Marked passages appear here.</p>'}
@@ -403,7 +559,7 @@ function recordingScreen() {
 function render() {
   if (audioUrl) URL.revokeObjectURL(audioUrl);
   audioUrl = undefined;
-  closePassageMenu();
+  dismissPassageSelection();
   let content;
   const person = visiblePeople(state).find(item => item.id === page.id);
   if (page.name === 'unfiled') content = unfiledScreen();
@@ -927,19 +1083,20 @@ function openExistingHighlight(mark, focus) {
 }
 
 document.addEventListener('pointerdown', event => {
+  if (event.target.closest?.('[data-selection-handle]')) return;
   if (passageMenu?.element.contains(event.target)) {
     clearTimeout(selectionTimer);
     return;
   }
-  closePassageMenu();
-  pointerSelecting = Boolean(event.target.closest?.('#transcript'));
+  dismissPassageSelection();
+  pointerSelecting = Boolean(event.target.closest?.('#transcript:not(.touch-transcript)'));
 });
 
 for (const type of ['pointerup', 'pointercancel', 'touchend']) {
   document.addEventListener(type, event => {
     if (passageMenu?.element.contains(event.target)) return;
     pointerSelecting = false;
-    if (event.target.closest?.('#transcript') || document.getSelection()?.isCollapsed === false) queueSelectionMenu(0);
+    if (event.target.closest?.('#transcript:not(.touch-transcript)') || document.getSelection()?.isCollapsed === false) queueSelectionMenu(0);
   });
 }
 
@@ -955,7 +1112,7 @@ document.addEventListener('selectionchange', () => {
 });
 
 document.addEventListener('keydown', event => {
-  if (event.key === 'Escape') closePassageMenu();
+  if (event.key === 'Escape') dismissPassageSelection();
   const mark = event.target.closest?.('#transcript [data-highlight]');
   if (mark && ['Enter', ' '].includes(event.key)) {
     event.preventDefault();
@@ -963,8 +1120,18 @@ document.addEventListener('keydown', event => {
   }
 });
 
-window.addEventListener('scroll', closePassageMenu, { passive: true });
-window.addEventListener('resize', closePassageMenu);
+if (customTouchSelection) {
+  document.addEventListener('touchstart', startSelectionTouch, { passive: false });
+  document.addEventListener('touchmove', moveSelectionTouch, { passive: false });
+  document.addEventListener('touchend', endSelectionTouch, { passive: false });
+  document.addEventListener('touchcancel', dismissPassageSelection);
+  document.addEventListener('contextmenu', event => {
+    if (event.target.closest?.('.touch-transcript, .touch-selection-layer')) event.preventDefault();
+  });
+}
+
+window.addEventListener('scroll', dismissPassageSelection, { passive: true });
+window.addEventListener('resize', dismissPassageSelection);
 
 sheet.addEventListener('cancel', event => { if (busy) event.preventDefault(); });
 
