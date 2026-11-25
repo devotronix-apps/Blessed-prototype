@@ -118,7 +118,6 @@ main { max-width: 1120px; margin: auto; padding: 36px clamp(28px, 6vw, 88px) 36p
 .player audio { display: block; width: 100%; }
 .reading { padding: clamp(17px, 3vw, 25px); border: 1px solid var(--line); border-radius: var(--radius); background: var(--white); }
 .transcript { white-space: pre-wrap; overflow-wrap: anywhere; font: 1.2rem/1.7 var(--serif); }
-mark { background: #f7e0ac; color: inherit; }
 .hint { color: var(--muted); font-size: .84rem; margin: 8px 0; }
 .notes { display: grid; gap: 8px; }
 .annotation { border-left: 3px solid #ae8095; border-radius: 0 9px 9px 0; padding: 10px 13px; background: #f2eae9; overflow-wrap: anywhere; }
@@ -203,3 +202,45 @@ dialog > .button { margin-top: 12px; }
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { transition: none !important; }
 }
+
+[data-color="yellow"] { --highlight: #f7e0ac; }
+[data-color="green"] { --highlight: #d7ebc4; }
+[data-color="blue"] { --highlight: #d6e8fc; }
+[data-color="pink"] { --highlight: #f7d6e2; }
+[data-color="purple"] { --highlight: #eadcfa; }
+.transcript mark { background: var(--highlight, #f7e0ac); color: inherit; cursor: pointer; }
+.passage-menu {
+  position: fixed;
+  z-index: 6;
+  width: max-content;
+  max-width: calc(100vw - 16px);
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px;
+  padding: 4px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--white);
+  box-shadow: 0 5px 22px #45303e30;
+  user-select: none;
+}
+.passage-menu .button { min-height: 44px; }
+.passage-palette { display: flex; flex-wrap: wrap; gap: 2px; }
+.color-choice {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  min-height: 44px;
+  padding: 5px 8px;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--plum);
+  font-size: .8rem;
+  font-weight: 650;
+  text-transform: capitalize;
+}
+.color-choice:is(:hover, [aria-pressed="true"]) { border-color: var(--line); }
+.color-choice span { width: 17px; height: 17px; border-radius: 50%; background: var(--highlight); }
+.passage-quote { margin: 0 0 13px; padding-left: 12px; border-left: 3px solid var(--rose); overflow-wrap: anywhere; }
+.annotation .button { margin: 4px 0 -3px -11px; }

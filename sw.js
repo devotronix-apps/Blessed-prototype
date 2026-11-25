@@ -1,4 +1,4 @@
-const CACHE = 'blessed-shell-v1';
+const CACHE = 'blessed-shell-v2';
 const ASSETS = [
   './', './index.html', './manifest.json', './blessed.css',
   './blessed.mjs', './blessed-model.mjs',
@@ -7,7 +7,7 @@ const ASSETS = [
 const sampleURL = new URL('./sample.mp3', self.location.href).href;
 
 self.addEventListener('install', event => {
-  event.waitUntil(caches.open(CACHE).then(cache => cache.addAll(ASSETS)));
+  event.waitUntil(caches.open(CACHE).then(cache => cache.addAll(ASSETS)).then(() => self.skipWaiting()));
 });
 
 self.addEventListener('activate', event => {

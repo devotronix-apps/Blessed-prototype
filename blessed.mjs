@@ -1,7 +1,7 @@
 import {
   PATRIARCHAL_TYPE, TYPES, DEMO_TRANSCRIPT, DEMO_PDF, seed, homeFor, personFor,
   visiblePeople, visibleEntries, assignablePeople, searchEntries, duplicatePatriarchal,
-  fileEntry, insightsFor,
+  fileEntry, insightsFor, HIGHLIGHT_COLORS, annotationRange, changeAnnotation,
 } from './blessed-model.mjs';
 
 const app = document.querySelector('#app');
@@ -29,7 +29,9 @@ let capture;
 let retryAudio;
 let savingRecording = false;
 let audioUrl;
-let selectedPassage = '';
+let passageMenu;
+let selectionTimer;
+let pointerSelecting = false;
 let busy = false;
 
 function openDatabase() {
@@ -192,25 +194,128 @@ function audioPlayer(entry) {
 }
 
 function markedText(entry) {
-  const ranges = entry.annotations.filter(item => item.highlight).flatMap(item => {
-    const saved = item.start;
-    const start = Number.isInteger(saved) && entry.text.slice(saved, saved + item.quote.length) === item.quote
-      ? saved : entry.text.indexOf(item.quote);
-    return start < 0 ? [] : [{ start, end: start + item.quote.length }];
-  }).sort((first, second) => first.start - second.start);
-  let end = 0;
-  let result = '';
-  for (let index = 0; index < ranges.length; index += 1) {
-    const range = ranges[index];
-    let limit = range.end;
-    while (ranges[index + 1]?.start <= limit) {
-      index += 1;
-      limit = Math.max(limit, ranges[index].end);
-    }
-    result += esc(entry.text.slice(end, range.start)) + '<mark>' + esc(entry.text.slice(range.start, limit)) + '</mark>';
-    end = limit;
+  const ranges = entry.annotations.flatMap((item, index) => {
+    const range = item.highlight && annotationRange(entry.text, item);
+    return range ? [{ ...range, index, color: item.color || 'yellow' }] : [];
+  });
+  const boundaries = [...new Set([0, entry.text.length, ...ranges.flatMap(range => [range.start, range.end])])]
+    .sort((first, second) => first - second);
+  const seen = new Set();
+  return boundaries.slice(1).map((end, index) => {
+    const start = boundaries[index];
+    const text = esc(entry.text.slice(start, end));
+    const range = ranges.findLast(item => item.start <= start && item.end >= end);
+    if (!range) return text;
+    const first = !seen.has(range.index);
+    seen.add(range.index);
+    return `<mark data-highlight="${range.index}" data-color="${esc(range.color)}"${first ? ' tabindex="0" role="button" aria-label="Highlight options"' : ''}>${text}</mark>`;
+  }).join('');
+}
+
+function closePassageMenu() {
+  clearTimeout(selectionTimer);
+  passageMenu?.element.remove();
+  passageMenu = undefined;
+}
+
+function detailEntry() {
+  return page.name === 'detail' && visibleEntries(state).find(item => item.id === page.id);
+}
+
+function showPassageMenu(entry, anchor, context, focus = false) {
+  closePassageMenu();
+  const item = entry.annotations[context.index];
+  const editable = canEdit(entry);
+  if (!editable && !item?.note) return;
+  const element = document.createElement('div');
+  element.className = 'passage-menu';
+  element.setAttribute('role', 'group');
+  element.setAttribute('aria-label', 'Highlight options');
+  element.innerHTML = `
+    ${editable && !item?.highlight ? action('Highlight', 'passage-highlight') : ''}
+    ${editable ? action(item?.highlight ? 'Change color' : 'Highlight color', 'passage-palette') : ''}
+    ${editable || item?.note ? action(item?.note ? editable ? 'View or edit note' : 'View note' : 'Add note', 'passage-note') : ''}
+    ${editable && item?.highlight ? action('Remove highlight', 'passage-remove') : ''}`;
+  document.body.append(element);
+  passageMenu = { ...context, entryId: entry.id, anchor, element };
+  positionPassageMenu();
+  if (focus) element.querySelector('button')?.focus({ preventScroll: true });
+}
+
+function positionPassageMenu() {
+  const { element, anchor } = passageMenu;
+  const viewport = window.visualViewport;
+  const top = viewport?.offsetTop || 0;
+  const left = viewport?.offsetLeft || 0;
+  const width = viewport?.width || window.innerWidth;
+  const height = viewport?.height || window.innerHeight;
+  const menuWidth = element.offsetWidth;
+  const menuHeight = element.offsetHeight;
+  element.style.left = Math.max(left + 8, Math.min(anchor.left, left + width - menuWidth - 8)) + 'px';
+  const below = anchor.bottom + 10;
+  const preferred = below + menuHeight <= top + height - 8 ? below : anchor.top - menuHeight - 10;
+  element.style.top = Math.max(top + 8, Math.min(preferred, top + height - menuHeight - 8)) + 'px';
+}
+
+function showSelectedPassage() {
+  const transcript = document.querySelector('#transcript');
+  const selection = document.getSelection();
+  const entry = detailEntry();
+  if (!entry || !canEdit(entry) || !selection?.rangeCount || selection.isCollapsed || !transcript ||
+      !transcript.contains(selection.anchorNode) || !transcript.contains(selection.focusNode)) return;
+  const range = selection.getRangeAt(0);
+  const raw = range.toString();
+  const quote = raw.trim();
+  if (!quote) return;
+  const prefix = range.cloneRange();
+  prefix.selectNodeContents(transcript);
+  prefix.setEnd(range.startContainer, range.startOffset);
+  const start = prefix.toString().length + raw.indexOf(quote);
+  if (entry.text.slice(start, start + quote.length) !== quote) return;
+  const index = entry.annotations.findIndex(item =>
+    item.quote === quote && annotationRange(entry.text, item)?.start === start);
+  const rectangles = range.getClientRects();
+  const anchor = rectangles[rectangles.length - 1] || range.getBoundingClientRect();
+  showPassageMenu(entry, anchor, { index, start, quote });
+}
+
+function queueSelectionMenu(delay) {
+  clearTimeout(selectionTimer);
+  selectionTimer = setTimeout(() => {
+    if (!pointerSelecting && !sheet.open && !busy) showSelectedPassage();
+  }, delay);
+}
+
+async function applyPassageChange(context, changes) {
+  await update(next => {
+    const entry = visibleEntries(next).find(item => item.id === context.entryId);
+    if (!entry || !canEdit(entry)) throw new Error('This blessing is read-only.');
+    changeAnnotation(entry, context, changes);
+  });
+  document.getSelection()?.removeAllRanges();
+  closeSheet();
+  const focusIndex = context.index < 0 ? state.entries.find(entry => entry.id === context.entryId).annotations.length - 1 : context.index;
+  render();
+  if (changes.highlight !== false) {
+    document.querySelector(`[data-highlight="${focusIndex}"][tabindex]`)?.focus({ preventScroll: true });
   }
-  return result + esc(entry.text.slice(end));
+  toast(changes.highlight === false ? 'Highlight removed.' : 'Passage saved.');
+}
+
+function openPassageNote(entry, context) {
+  const item = entry.annotations[context.index];
+  closePassageMenu();
+  document.getSelection()?.removeAllRanges();
+  const quote = `<blockquote class="passage-quote">${esc(item?.quote || context.quote)}</blockquote>`;
+  if (!canEdit(entry)) {
+    openSheet('Passage note', `${quote}<p class="journal">${esc(item.note)}</p>`);
+    return;
+  }
+  openSheet(item?.note ? 'Passage note' : 'Add passage note', `${quote}
+    <form class="form" data-form="passage-note" data-id="${esc(entry.id)}" data-index="${context.index}" data-start="${context.start ?? ''}">
+      <label>Note<textarea name="note" rows="5">${esc(item?.note)}</textarea></label>
+      <button type="submit" class="button primary">Save note</button>
+    </form>`);
 }
 
 function detailScreen(entry) {
@@ -224,9 +329,10 @@ function detailScreen(entry) {
     <section class="section reading"><div class="section-heading"><h2>${entry.audio || entry.sampleAudio ? 'Transcript' : 'Blessing text'}</h2>
       ${entry.simulated ? '<span>Sample text</span>' : ''}</div>
       <p id="transcript" class="transcript">${markedText(entry) || 'No transcript yet.'}</p>
-      ${editable && entry.text ? `<p class="hint">Select text to mark a passage, or enter the passage manually.</p>${action('Mark a passage', 'annotate', { id: entry.id, symbol: '✎', style: 'outline' })}` : ''}</section>
+      ${editable && entry.text ? '<p class="hint">Select text to highlight it. Tap a highlight for options.</p>' : ''}</section>
     <section class="section"><div class="section-heading"><h2>Highlights &amp; passage notes</h2></div>
-      ${entry.annotations.length ? `<div class="notes">${entry.annotations.map(item => `<article class="annotation"><blockquote>${esc(item.quote)}</blockquote>${item.note ? `<p>${esc(item.note)}</p>` : '<small>Highlight</small>'}</article>`).join('')}</div>` : '<p class="hint">Marked passages appear here.</p>'}
+      ${entry.annotations.length ? `<div class="notes">${entry.annotations.map((item, index) => `<article class="annotation"><blockquote>${esc(item.quote)}</blockquote>${item.note ? `<p>${esc(item.note)}</p>` : '<small>Highlight</small>'}
+        ${editable || item.note ? action('Passage options', 'passage-existing', { id: index + 1 }) : ''}</article>`).join('')}</div>` : '<p class="hint">Marked passages appear here.</p>'}
     </section>
     <section class="section"><div class="section-heading"><h2>Blessing journal</h2>${editable ? action(entry.journal ? 'Edit note' : 'Add note', 'journal', { id: entry.id, style: 'outline' }) : ''}</div>
       <p class="journal">${esc(entry.journal || 'A place for memories and reflections about this blessing.')}</p></section>`;
@@ -297,7 +403,7 @@ function recordingScreen() {
 function render() {
   if (audioUrl) URL.revokeObjectURL(audioUrl);
   audioUrl = undefined;
-  selectedPassage = '';
+  closePassageMenu();
   let content;
   const person = visiblePeople(state).find(item => item.id === page.id);
   if (page.name === 'unfiled') content = unfiledScreen();
@@ -402,12 +508,9 @@ function entryFields(entry) {
 
 function editEntry(entry, kind) {
   if (!entry || !canEdit(entry)) return;
-  const heading = { edit: 'Edit blessing', annotate: 'Mark a passage', journal: 'Blessing journal' }[kind];
+  const heading = { edit: 'Edit blessing', journal: 'Blessing journal' }[kind];
   const fields = {
     edit: entryFields(entry),
-    annotate: `<label>Passage<textarea name="quote" rows="3" required>${esc(selectedPassage)}</textarea></label>
-      <label class="check"><input type="checkbox" name="highlight" checked>Highlight this passage</label>
-      <label>Passage note<textarea name="note" rows="3" placeholder="Optional"></textarea></label>`,
     journal: `<label>Journal note<textarea name="journal" rows="7">${esc(entry.journal)}</textarea></label>`,
   };
   openSheet(heading, `<form class="form" data-form="${kind}" data-id="${esc(entry.id)}">${fields[kind]}
@@ -604,7 +707,16 @@ async function submit(form, submitter) {
     else go('unfiled');
     toast(personId ? 'Blessing filed.' : 'Draft saved.');
   }
-  if (command === 'edit' || command === 'annotate' || command === 'journal') {
+  if (command === 'passage-note') {
+    const entry = detailEntry();
+    const index = Number(form.dataset.index);
+    const start = Number(form.dataset.start);
+    const quote = entry.annotations[index]?.quote || sheet.querySelector('.passage-quote').textContent;
+    const note = String(data.get('note')).trim();
+    if (index < 0 && !note) throw new Error('Enter a note.');
+    await applyPassageChange({ entryId: id, index, start, quote }, { note, ...(index < 0 ? { highlight: true } : {}) });
+  }
+  if (command === 'edit' || command === 'journal') {
     await update(next => {
       const entry = next.entries.find(item => item.id === id);
       if (command === 'edit') {
@@ -612,15 +724,6 @@ async function submit(form, submitter) {
         if (entry.type === PATRIARCHAL_TYPE && !entry.text) throw new Error('Enter the written blessing.');
       }
       if (command === 'journal') entry.journal = String(data.get('journal')).trim();
-      if (command === 'annotate') {
-        const quote = String(data.get('quote')).trim();
-        const note = String(data.get('note')).trim();
-        const highlight = data.has('highlight');
-        const start = entry.text.indexOf(quote);
-        if (!quote || start < 0) throw new Error('Enter a passage that appears in the blessing text.');
-        if (!highlight && !note) throw new Error('Choose a highlight or enter a passage note.');
-        entry.annotations.push({ quote, note, highlight, start });
-      }
     });
     closeSheet();
     render();
@@ -709,7 +812,26 @@ async function perform(button) {
       <button class="button primary" type="submit">${family ? 'Create family' : 'Add person'}</button></form>`);
   }
   if (command === 'edit-entry') editEntry(entry, 'edit');
-  if (command === 'annotate') editEntry(entry, 'annotate');
+  if (command === 'passage-existing') {
+    const current = detailEntry();
+    if (current) showPassageMenu(current, button.getBoundingClientRect(), { index: Number(id) - 1 }, true);
+  }
+  if (command.startsWith('passage-') && command !== 'passage-existing' && passageMenu) {
+    const context = passageMenu;
+    const current = detailEntry();
+    if (!current || current.id !== context.entryId) return;
+    if (command === 'passage-note') openPassageNote(current, context);
+    if (command === 'passage-highlight') await applyPassageChange(context, { highlight: true });
+    if (command === 'passage-remove') await applyPassageChange(context, { highlight: false });
+    if (command === 'passage-color') await applyPassageChange(context, { highlight: true, color: id });
+    if (command === 'passage-palette') {
+      const selected = current.annotations[context.index]?.color || 'yellow';
+      context.element.innerHTML = `<div class="passage-palette" aria-label="Highlight color">${HIGHLIGHT_COLORS.map(color =>
+        `<button type="button" class="color-choice" data-action="passage-color" data-id="${color}" data-color="${color}" aria-pressed="${color === selected}"><span></span>${color}</button>`).join('')}</div>`;
+      positionPassageMenu();
+      context.element.querySelector('[aria-pressed=true]')?.focus({ preventScroll: true });
+    }
+  }
   if (command === 'journal') editEntry(entry, 'journal');
   if (command === 'accounts') accounts();
   if (command === 'switch-account') {
@@ -798,14 +920,51 @@ document.addEventListener('input', event => {
       ['newPerson', 'person', 'type'].includes(event.target.name)) updateDuplicate();
 });
 
+function openExistingHighlight(mark, focus) {
+  const entry = detailEntry();
+  if (!entry) return;
+  showPassageMenu(entry, mark.getBoundingClientRect(), { index: Number(mark.dataset.highlight) }, focus);
+}
+
+document.addEventListener('pointerdown', event => {
+  if (passageMenu?.element.contains(event.target)) {
+    clearTimeout(selectionTimer);
+    return;
+  }
+  closePassageMenu();
+  pointerSelecting = Boolean(event.target.closest?.('#transcript'));
+});
+
+for (const type of ['pointerup', 'pointercancel', 'touchend']) {
+  document.addEventListener(type, event => {
+    if (passageMenu?.element.contains(event.target)) return;
+    pointerSelecting = false;
+    if (event.target.closest?.('#transcript') || document.getSelection()?.isCollapsed === false) queueSelectionMenu(0);
+  });
+}
+
+document.addEventListener('click', event => {
+  const mark = event.target.closest?.('#transcript [data-highlight]');
+  if (mark && document.getSelection()?.isCollapsed) openExistingHighlight(mark, event.detail === 0);
+});
+
 document.addEventListener('selectionchange', () => {
-  const transcript = document.querySelector('#transcript');
   const selection = document.getSelection();
-  if (transcript && selection && !selection.isCollapsed &&
-      transcript.contains(selection.anchorNode) && transcript.contains(selection.focusNode)) {
-    selectedPassage = selection.toString().trim();
+  if (!pointerSelecting && selection && !selection.isCollapsed &&
+      !passageMenu?.element.contains(document.activeElement)) queueSelectionMenu(150);
+});
+
+document.addEventListener('keydown', event => {
+  if (event.key === 'Escape') closePassageMenu();
+  const mark = event.target.closest?.('#transcript [data-highlight]');
+  if (mark && ['Enter', ' '].includes(event.key)) {
+    event.preventDefault();
+    openExistingHighlight(mark, true);
   }
 });
+
+window.addEventListener('scroll', closePassageMenu, { passive: true });
+window.addEventListener('resize', closePassageMenu);
 
 sheet.addEventListener('cancel', event => { if (busy) event.preventDefault(); });
 

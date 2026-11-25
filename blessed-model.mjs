@@ -159,3 +159,26 @@ export function insightsFor(state, personId) {
   }
   return insights;
 }
+
+export const HIGHLIGHT_COLORS = ['yellow', 'green', 'blue', 'pink', 'purple'];
+
+export function annotationRange(text, annotation) {
+  if (!annotation.quote) return;
+  const saved = annotation.start;
+  const start = Number.isInteger(saved) && text.slice(saved, saved + annotation.quote.length) === annotation.quote
+    ? saved : text.indexOf(annotation.quote);
+  return start >= 0 ? { start, end: start + annotation.quote.length } : undefined;
+}
+
+export function changeAnnotation(entry, { index, start, quote }, changes) {
+  if (changes.color && !HIGHLIGHT_COLORS.includes(changes.color)) throw new Error('Choose a highlight color.');
+  if (index >= 0 && !entry.annotations[index]) throw new Error('This passage is no longer available.');
+  if (index < 0 && (!quote || entry.text.slice(start, start + quote.length) !== quote)) {
+    throw new Error('Select the passage again.');
+  }
+
+  const item = entry.annotations[index] || { start, quote, note: '', highlight: false };
+  Object.assign(item, changes);
+  if (!item.highlight && !item.note) entry.annotations.splice(index, 1);
+  else if (index < 0) entry.annotations.push(item);
+}
