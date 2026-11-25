@@ -520,7 +520,7 @@ function detailScreen(entry) {
       ${editable && entry.text ? `<p class="hint">${customTouchSelection ? 'Touch and hold to select text. Drag the handles to adjust it.' : 'Select text to highlight it.'} Tap a highlight for options.</p>` : ''}</section>
     <section class="section"><div class="section-heading"><h2>Highlights &amp; passage notes</h2></div>
       ${entry.annotations.length ? `<div class="notes">${entry.annotations.map((item, index) => `<article class="annotation"><blockquote>${esc(item.quote)}</blockquote>${item.note ? `<p>${esc(item.note)}</p>` : '<small>Highlight</small>'}
-        ${editable || item.note ? action('Passage options', 'passage-existing', { id: index + 1 }) : ''}</article>`).join('')}</div>` : '<p class="hint">Marked passages appear here.</p>'}
+        ${editable || item.note ? `<button type="button" class="annotation-options" data-action="passage-existing" data-id="${index + 1}" aria-label="Passage options"><span aria-hidden="true">…</span></button>` : ''}</article>`).join('')}</div>` : '<p class="hint">Marked passages appear here.</p>'}
     </section>
     <section class="section"><div class="section-heading"><h2>Blessing journal</h2>${editable ? action(entry.journal ? 'Edit note' : 'Add note', 'journal', { id: entry.id, style: 'outline' }) : ''}</div>
       <p class="journal">${esc(entry.journal || 'A place for memories and reflections about this blessing.')}</p></section>`;

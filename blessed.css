@@ -120,7 +120,7 @@ main { max-width: 1120px; margin: auto; padding: 36px clamp(28px, 6vw, 88px) 36p
 .transcript { white-space: pre-wrap; overflow-wrap: anywhere; font: 1.2rem/1.7 var(--serif); }
 .hint { color: var(--muted); font-size: .84rem; margin: 8px 0; }
 .notes { display: grid; gap: 8px; }
-.annotation { border-left: 3px solid #ae8095; border-radius: 0 9px 9px 0; padding: 10px 13px; background: #f2eae9; overflow-wrap: anywhere; }
+.annotation { position: relative; border-left: 3px solid #ae8095; border-radius: 0 9px 9px 0; padding: 10px 13px; background: #f2eae9; overflow-wrap: anywhere; }
 .annotation blockquote { margin: 0; font: italic 1.07rem/1.4 var(--serif); }
 .annotation p, .annotation small { display: block; color: var(--muted); margin-top: 5px; }
 .journal { white-space: pre-wrap; overflow-wrap: anywhere; color: var(--muted); }
@@ -243,7 +243,22 @@ dialog > .button { margin-top: 12px; }
 .color-choice:is(:hover, [aria-pressed="true"]) { border-color: var(--line); }
 .color-choice span { width: 17px; height: 17px; border-radius: 50%; background: var(--highlight); }
 .passage-quote { margin: 0 0 13px; padding-left: 12px; border-left: 3px solid var(--rose); overflow-wrap: anywhere; }
-.annotation .button { margin: 4px 0 -3px -11px; }
+.annotation:has(.annotation-options) { padding-inline-end: 49px; }
+.annotation-options {
+  position: absolute;
+  inset-block-start: 0;
+  inset-inline-end: 3px;
+  display: grid;
+  place-items: center;
+  width: 44px;
+  height: 44px;
+  border: 0;
+  border-radius: 9px;
+  background: transparent;
+  color: var(--plum);
+  font: 700 1.35rem/1 var(--sans);
+}
+.annotation-options:hover { background: var(--rose); }
 
 .touch-transcript, .touch-transcript * {
   -webkit-touch-callout: none;
