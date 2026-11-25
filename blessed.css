@@ -64,6 +64,8 @@ main { max-width: 1120px; margin: auto; padding: 36px clamp(28px, 6vw, 88px) 36p
 .button.outline:hover, .button.quiet:hover { background: var(--rose); }
 .button.quiet { color: var(--plum); }
 .button.back { margin: -10px 0 10px -12px; }
+.button.danger { color: #8e2d35; }
+.button.danger:hover { background: #f8e4e5; }
 .button-row { display: flex; flex-wrap: wrap; gap: 9px; margin-top: 17px; }
 .button-row.compact { margin-top: 9px; }
 .icon { flex-shrink: 0; display: inline-flex; align-items: center; justify-content: center; }

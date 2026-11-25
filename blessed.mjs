@@ -487,7 +487,7 @@ async function applyPassageChange(context, changes) {
   if (changes.highlight !== false) {
     document.querySelector(`[data-highlight="${focusIndex}"][tabindex]`)?.focus({ preventScroll: true });
   }
-  toast(changes.highlight === false ? 'Highlight removed.' : 'Passage saved.');
+  toast(changes.highlight === false ? 'Highlight removed.' : changes.note === '' ? 'Passage note deleted.' : 'Passage saved.');
 }
 
 function openPassageNote(entry, context) {
@@ -502,7 +502,10 @@ function openPassageNote(entry, context) {
   openSheet(item?.note ? 'Passage note' : 'Add passage note', `${quote}
     <form class="form" data-form="passage-note" data-id="${esc(entry.id)}" data-index="${context.index}" data-start="${context.start ?? ''}">
       <label>Note<textarea name="note" rows="5">${esc(item?.note)}</textarea></label>
-      <button type="submit" class="button primary">Save note</button>
+      <div class="button-row compact">
+        <button type="submit" class="button primary">Save note</button>
+        ${item?.note ? '<button type="submit" class="button danger" value="delete-note">Delete note</button>' : ''}
+      </div>
     </form>`);
 }
 
@@ -900,7 +903,7 @@ async function submit(form, submitter) {
     const index = Number(form.dataset.index);
     const start = Number(form.dataset.start);
     const quote = entry.annotations[index]?.quote || sheet.querySelector('.passage-quote').textContent;
-    const note = String(data.get('note')).trim();
+    const note = submitter?.value === 'delete-note' ? '' : String(data.get('note')).trim();
     if (index < 0 && !note) throw new Error('Enter a note.');
     await applyPassageChange({ entryId: id, index, start, quote }, { note, ...(index < 0 ? { highlight: true } : {}) });
   }

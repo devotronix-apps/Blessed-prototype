@@ -1,7 +1,7 @@
-const CACHE = 'blessed-shell-v5';
+const CACHE = 'blessed-shell-v6';
 const ASSETS = [
-  './', './index.html', './manifest.json', './blessed.css?v=5',
-  './blessed.mjs?v=5', './blessed-model.mjs',
+  './', './index.html', './manifest.json', './blessed.css?v=6',
+  './blessed.mjs?v=6', './blessed-model.mjs',
   './blessed-icon.png', './blessed-icon-large.png', './sample.mp3',
 ];
 const sampleURL = new URL('./sample.mp3', self.location.href).href;
