@@ -34,9 +34,9 @@ let selectionTimer;
 let pointerSelecting = false;
 let touchGesture;
 let touchPassage;
-const customTouchSelection = navigator.maxTouchPoints > 0 &&
-  (window.CSS?.supports('-webkit-touch-callout', 'none') ||
-    /iPhone|iPad|iPod/.test(navigator.userAgent));
+const customTouchSelection = navigator.maxTouchPoints > 0 ||
+  window.matchMedia?.('(any-pointer: coarse)').matches ||
+  /iPhone|iPad|iPod/.test(navigator.userAgent);
 let busy = false;
 
 function openDatabase() {
@@ -285,7 +285,13 @@ function showSelectedPassage() {
   const prefix = range.cloneRange();
   prefix.selectNodeContents(transcript);
   prefix.setEnd(range.startContainer, range.startOffset);
-  showRangeMenu(entry, range, prefix.toString().length, raw);
+  const offset = prefix.toString().length;
+  clearTouchPassage();
+  const layer = createSelectionLayer(false);
+  touchPassage = { transcript, layer, start: offset, end: offset + raw.length };
+  drawTouchPassage();
+  selection.removeAllRanges();
+  showRangeMenu(entry, range, offset, raw);
 }
 
 function showRangeMenu(entry, range, offset, raw = range.toString()) {
@@ -301,11 +307,13 @@ function showRangeMenu(entry, range, offset, raw = range.toString()) {
 }
 
 function touchOffset(transcript, x, y) {
-  const caret = document.caretRangeFromPoint?.(x, y);
-  if (!caret || !transcript.contains(caret.startContainer)) return;
-  const prefix = caret.cloneRange();
+  const caret = document.caretPositionFromPoint?.(x, y);
+  const range = caret ? null : document.caretRangeFromPoint?.(x, y);
+  const node = caret?.offsetNode || range?.startContainer;
+  if (!node || !transcript.contains(node)) return;
+  const prefix = document.createRange();
   prefix.selectNodeContents(transcript);
-  prefix.setEnd(caret.startContainer, caret.startOffset);
+  prefix.setEnd(node, caret?.offset ?? range.startOffset);
   return prefix.toString().length;
 }
 
@@ -351,6 +359,7 @@ function drawTouchPassage() {
   }
   for (const [edge, rect] of [['start', rects[0]], ['end', rects.at(-1)]]) {
     const handle = layer.querySelector(`[data-selection-handle="${edge}"]`);
+    if (!handle) continue;
     handle.hidden = !rect;
     if (rect) {
       handle.style.left = (edge === 'start' ? rect.left : rect.right) + 'px';
@@ -366,15 +375,21 @@ function startTouchPassage(gesture) {
   const offset = touchOffset(gesture.transcript, gesture.x, gesture.y);
   const word = Number.isInteger(offset) && wordAt(entry.text, offset);
   if (!word) return;
-  const layer = document.createElement('div');
-  layer.className = 'touch-selection-layer';
-  layer.setAttribute('aria-hidden', 'true');
-  layer.innerHTML = '<div></div><span data-selection-handle="start"></span><span data-selection-handle="end"></span>';
-  document.body.append(layer);
+  const layer = createSelectionLayer();
   touchPassage = { ...word, layer, transcript: gesture.transcript };
   gesture.word = word;
   gesture.active = true;
   drawTouchPassage();
+}
+
+function createSelectionLayer(handles = true) {
+  const layer = document.createElement('div');
+  layer.className = 'touch-selection-layer';
+  layer.setAttribute('aria-hidden', 'true');
+  layer.innerHTML = '<div></div>' +
+    (handles ? '<span data-selection-handle="start"></span><span data-selection-handle="end"></span>' : '');
+  document.body.append(layer);
+  return layer;
 }
 
 function startSelectionTouch(event) {
@@ -393,23 +408,37 @@ function startSelectionTouch(event) {
     return;
   }
   if (passageMenu?.element.contains(event.target)) return;
-  const transcript = event.target.closest?.('.touch-transcript');
-  if (!transcript || sheet.open || busy || !canEdit(detailEntry())) return;
+  const transcript = event.target.closest?.('#transcript');
+  if (!transcript || sheet.open || busy) return;
+
+  // Stop the browser's native selection before the long press starts.
+  event.preventDefault();
+  transcript.classList.add('touch-transcript');
+  document.getSelection()?.removeAllRanges();
   dismissPassageSelection();
-  const gesture = { id: touch.identifier, x: touch.clientX, y: touch.clientY, transcript };
+  const gesture = { id: touch.identifier, x: touch.clientX, y: touch.clientY,
+    lastY: touch.clientY, transcript, mark: event.target.closest?.('[data-highlight]') };
   touchGesture = gesture;
-  gesture.timer = setTimeout(() => startTouchPassage(gesture), 360);
+  const entry = detailEntry();
+  if (entry && canEdit(entry)) gesture.timer = setTimeout(() => startTouchPassage(gesture), 360);
 }
 
 function moveSelectionTouch(event) {
   const gesture = touchGesture;
-  const touch = gesture && [...event.changedTouches].find(item => item.identifier === gesture.id);
+  const touch = gesture && Array.from(event.changedTouches).find(item => item.identifier === gesture.id);
   if (!touch) return;
+  event.preventDefault();
   if (!gesture.active) {
-    if (Math.hypot(touch.clientX - gesture.x, touch.clientY - gesture.y) > 10) clearTouchPassage();
+    if (!gesture.scrolling && Math.hypot(touch.clientX - gesture.x, touch.clientY - gesture.y) > 10) {
+      clearTimeout(gesture.timer);
+      gesture.scrolling = true;
+    }
+    if (gesture.scrolling) {
+      window.scrollBy(0, gesture.lastY - touch.clientY);
+      gesture.lastY = touch.clientY;
+    }
     return;
   }
-  event.preventDefault();
   const offset = touchOffset(touchPassage.transcript,
     touch.clientX - (gesture.offsetX || 0), touch.clientY - (gesture.offsetY || 0));
   if (!Number.isInteger(offset)) return;
@@ -424,10 +453,13 @@ function moveSelectionTouch(event) {
 
 function endSelectionTouch(event) {
   const gesture = touchGesture;
-  if (!gesture || ![...event.changedTouches].some(item => item.identifier === gesture.id)) return;
+  if (!gesture || !Array.from(event.changedTouches).some(item => item.identifier === gesture.id)) return;
   clearTimeout(gesture.timer);
   touchGesture = undefined;
-  if (!gesture.active) return;
+  if (!gesture.active) {
+    if (!gesture.scrolling && gesture.mark?.isConnected) openExistingHighlight(gesture.mark, false);
+    return;
+  }
   event.preventDefault();
   const entry = detailEntry();
   const range = entry && touchRange();
@@ -1102,7 +1134,7 @@ for (const type of ['pointerup', 'pointercancel', 'touchend']) {
 
 document.addEventListener('click', event => {
   const mark = event.target.closest?.('#transcript [data-highlight]');
-  if (mark && document.getSelection()?.isCollapsed) openExistingHighlight(mark, event.detail === 0);
+  if (mark && !touchPassage && document.getSelection()?.isCollapsed) openExistingHighlight(mark, event.detail === 0);
 });
 
 document.addEventListener('selectionchange', () => {
@@ -1120,17 +1152,20 @@ document.addEventListener('keydown', event => {
   }
 });
 
-if (customTouchSelection) {
-  document.addEventListener('touchstart', startSelectionTouch, { passive: false });
-  document.addEventListener('touchmove', moveSelectionTouch, { passive: false });
-  document.addEventListener('touchend', endSelectionTouch, { passive: false });
-  document.addEventListener('touchcancel', dismissPassageSelection);
-  document.addEventListener('contextmenu', event => {
-    if (event.target.closest?.('.touch-transcript, .touch-selection-layer')) event.preventDefault();
-  });
-}
+document.addEventListener('touchstart', startSelectionTouch, { passive: false, capture: true });
+document.addEventListener('touchmove', moveSelectionTouch, { passive: false });
+document.addEventListener('touchend', endSelectionTouch, { passive: false });
+document.addEventListener('touchcancel', dismissPassageSelection);
+document.addEventListener('selectstart', event => {
+  if (event.target.closest?.('.touch-transcript')) event.preventDefault();
+});
+document.addEventListener('contextmenu', event => {
+  if (event.target.closest?.('#transcript, .touch-selection-layer')) event.preventDefault();
+});
 
-window.addEventListener('scroll', dismissPassageSelection, { passive: true });
+window.addEventListener('scroll', () => {
+  if (!touchGesture?.scrolling) dismissPassageSelection();
+}, { passive: true });
 window.addEventListener('resize', dismissPassageSelection);
 
 sheet.addEventListener('cancel', event => { if (busy) event.preventDefault(); });
@@ -1140,7 +1175,7 @@ try {
   state = await load();
   render();
   if ('serviceWorker' in navigator) {
-    navigator.serviceWorker.register('./sw.js').catch(() => {});
+    navigator.serviceWorker.register('./sw.js', { updateViaCache: 'none' }).catch(() => {});
   }
 } catch {
   app.innerHTML = '<main class="startup-error"><h1>Blessed</h1><p>Browser storage is unavailable. Open the prototype in a browser that allows local site data.</p></main>';

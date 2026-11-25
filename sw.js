@@ -1,13 +1,13 @@
-const CACHE = 'blessed-shell-v3';
+const CACHE = 'blessed-shell-v4';
 const ASSETS = [
-  './', './index.html', './manifest.json', './blessed.css',
-  './blessed.mjs', './blessed-model.mjs',
+  './', './index.html', './manifest.json', './blessed.css?v=4',
+  './blessed.mjs?v=4', './blessed-model.mjs',
   './blessed-icon.png', './blessed-icon-large.png', './sample.mp3',
 ];
 const sampleURL = new URL('./sample.mp3', self.location.href).href;
 
 self.addEventListener('install', event => {
-  event.waitUntil(caches.open(CACHE).then(cache => cache.addAll(ASSETS)).then(() => self.skipWaiting()));
+  event.waitUntil(caches.open(CACHE).then(cache => cache.addAll(ASSETS.map(asset => new Request(asset, { cache: 'reload' })))).then(() => self.skipWaiting()));
 });
 
 self.addEventListener('activate', event => {
@@ -19,12 +19,11 @@ self.addEventListener('activate', event => {
 
 async function serve(request) {
   const cache = await caches.open(CACHE);
-  const cached = await cache.match(request.url);
-  if (!cached) {
-    return request.mode === 'navigate'
-      ? fetch(request).catch(() => cache.match('./index.html'))
-      : fetch(request);
+  if (request.mode === 'navigate') {
+    return fetch(request, { cache: 'no-cache' }).catch(() => cache.match('./index.html'));
   }
+  const cached = await cache.match(request.url);
+  if (!cached) return fetch(request);
 
   const range = request.headers.get('range');
   if (request.url !== sampleURL || !range) return cached;
